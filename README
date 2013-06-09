@@ -1,0 +1,5 @@
+This is the source code and schematic / PCB layout for the Surreality Labs NESVerter. See http://surrealitylabs.com/projects/nesverter/
+
+The firmware is compiled with JALv2 v2.4p with JALLIB. The firmware is released under a 3-clause BSD license.
+
+The PCB is released under the CERN Open Hardware license, and is provided in EAGLE, Gerber and PDF formats.
