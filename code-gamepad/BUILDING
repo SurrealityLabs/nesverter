@@ -1,0 +1,7 @@
+To build the firmware, download JALv2 with JALLIB from http://code.google.com/p/jallib/
+
+jallib-pack-2.4p-0.9.0.zip was used for building this version.
+
+On my Mac, the following command line invocation was used to compile, run from the Terminal in the compiler directory in the expanded JALLIB pack:
+
+./jalv2osx -long-start -s ../lib /path/to/nesverter.jal -loader18 -no-fuse

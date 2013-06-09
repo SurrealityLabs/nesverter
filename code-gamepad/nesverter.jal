@@ -1,0 +1,313 @@
+-- ===================================================
+-- Title: NESVerter USB Game Controller code in JALv2
+--
+-- Author: Randy Glenn, Copyright (c) 2013, all rights reserved.
+--
+-- Compiler: 2.4p
+--
+-- Released under the BSD 3-Clause license (http://www.opensource.org/licenses/BSD-3-Clause)
+--
+-- Description:
+--    Code for the NESVerter NES gamepad to USB adapter
+--    For more information visit http://surrealitylabs.com/projects/nesverter/
+--
+-- ===================================================
+--
+include 18f14k50
+pragma target clock       48_000_000
+
+-- Setting the bootloader vector for the Microchip USB HID bootloader
+PRAGMA BOOTLOADER LOADER18 0x1000
+
+include delay
+
+const bit USB_DEBUG = false
+const bit USB_DEBUG_HIGH = false
+const bit USB_HID_DEBUG = false
+const bit USB_HID_DEBUG_HIGH = false
+const byte USB_HID_ENDPOINT = 0x01
+
+include usb_defs
+
+const bit USB_EP0 = 1
+const byte USB_EP0_OUT_SIZE = 8
+const word USB_EP0_OUT_ADDR = ( USB_BASE_ADDRESS + 0x0010 )
+const byte USB_EP0_IN_SIZE  = 8
+const word USB_EP0_IN_ADDR  = ( USB_EP0_OUT_ADDR + USB_EP0_OUT_SIZE )
+
+const bit USB_EP1 = 1
+const byte USB_EP1_OUT_SIZE = 8
+const word USB_EP1_OUT_ADDR = ( USB_EP0_IN_ADDR + USB_EP0_IN_SIZE )
+const byte USB_EP1_IN_SIZE  = 8
+const word USB_EP1_IN_ADDR  = ( USB_EP1_OUT_ADDR + USB_EP1_OUT_SIZE )
+
+var volatile byte  usb_ep1in_buf[ 8 ] at USB_EP1_IN_ADDR
+
+const bit USB_EP2 = 0
+const byte USB_EP2_OUT_SIZE = 8
+const word USB_EP2_OUT_ADDR = 0x0000
+const byte USB_EP2_IN_SIZE  = 8
+const word USB_EP2_IN_ADDR  = 0x0000
+
+const bit USB_EP3 = 0
+const byte USB_EP3_OUT_SIZE = 8
+const word USB_EP3_OUT_ADDR = 0x0000
+const byte USB_EP3_IN_SIZE = 8
+const word USB_EP3_IN_ADDR  = 0x0000
+
+const byte USB_DEVICE_DESCRIPTOR[USB_DEVICE_DESCRIPTOR_SIZE] = {
+    USB_DEVICE_DESCRIPTOR_SIZE,     -- 18 bytes long
+    USB_DT_DEVICE,  -- DEVICE 01h
+    0x00,
+    0x02,       -- usb version 2.00
+    0x00,       -- class
+    0x00,       -- subclass
+    0x00,       -- protocol
+    USB_EP0_OUT_SIZE,       -- max packet size for end point 0
+    0xd8,
+    0x04,       -- Microchip's vendor
+	0x55,
+	0x00,		-- Microchip keyboard demo
+    0x01,
+    0x00,        -- version 1.0 of the product
+    0x01,       -- string 1 for manufacturer
+    0x02,       -- string 2 for product
+    0x00,       -- string 3 for serial number
+    0x01        -- number of configurations
+}
+
+const byte USB_HID_REPORT1[]=
+{
+    0x05, 0x01,                    -- USAGE_PAGE (Generic Desktop)
+    0x09, 0x05,                    -- USAGE (Game Pad)
+    0xa1, 0x01,                    -- COLLECTION (Application)
+    0x09, 0x01,                    --   USAGE (Pointer)
+    0xa1, 0x00,                    --   COLLECTION (Physical)
+    0x09, 0x30,                    --     USAGE (X)
+    0x09, 0x31,                    --     USAGE (Y)
+    0x15, 0x00,                    --   LOGICAL_MINIMUM (0)
+    0x26, 0xff, 0x00,              --     LOGICAL_MAXIMUM (255)
+    0x75, 0x08,                    --   REPORT_SIZE (8)
+    0x95, 0x02,                    --   REPORT_COUNT (2)
+    0x81, 0x02,                    --   INPUT (Data,Var,Abs)
+    0xc0,                          -- END_COLLECTION
+    0x05, 0x09,                    -- USAGE_PAGE (Button)
+    0x19, 0x01,                    --   USAGE_MINIMUM (Button 1)
+    0x29, 0x08,                    --   USAGE_MAXIMUM (Button 8)
+    0x15, 0x00,                    --   LOGICAL_MINIMUM (0)
+    0x25, 0x01,                    --   LOGICAL_MAXIMUM (1)
+    0x75, 0x01,                    -- REPORT_SIZE (1)
+    0x95, 0x08,                    -- REPORT_COUNT (8)
+    0x81, 0x02,                    -- INPUT (Data,Var,Abs)
+    0xc0                           -- END_COLLECTION 
+}
+const USB_CONFIGURATION_DESCRIPTOR_SIZE = 0x09 + 0x09 + 0x09 + 0x07
+const byte USB_CONFIGURATION_DESCRIPTOR[ USB_CONFIGURATION_DESCRIPTOR_SIZE ]=
+{   
+    -- configuration descriptor - - - - - - - - - - 
+    0x09,   -- length,
+    USB_DT_CONFIGURATION,   -- descriptor_type
+
+    USB_CONFIGURATION_DESCRIPTOR_SIZE,
+    0x00,   -- total_length;
+    
+    0x01,   -- num_interfaces,
+    0x01,   -- configuration_value,
+    0x00,   -- configuration_string_id,
+    0b10000000, -- attributes (bus powered, no remote wake up)
+    50,    -- max_power; (200ma)
+
+    -- interface descriptor - - - - - - - - - - - -
+    0x09,                       -- length,
+    USB_DT_INTERFACE,           -- descriptor_type,
+    0x00,                       -- interface_number, (starts at zero)
+    0x00,                       -- alternate_setting, (no alternatives)
+    0x01,                       -- num_endpoints,
+    USB_HID_INTF,               -- interface_class, (HID)
+    USB_BOOT_INTF_SUBCLASS,     -- interface_subclass, (boot)
+    USB_HID_PROTOCOL_KEYBOARD,  -- interface_protocol, (keyboard)
+    0x00,   -- interface_string_id;
+    
+    -- hid descriptor - - - - - - - - - - - - - - -
+    0x09,               -- length,
+    USB_DT_HID,         -- descriptor_type;
+    0x11,
+    0x01,               -- hid_spec in BCD (1.11)
+    0x00,               -- country_code, (0=not country specific)
+    0x01,               -- num_class_descriptors, (1)
+    USB_DT_HID_REPORT,  -- class_descriptor_type; (0x22 = report)
+    (count( USB_HID_REPORT1 ) & 0xFF ),
+    (count( USB_HID_REPORT1 ) >> 8 ),
+    
+    0x07,               -- length,
+    USB_DT_ENDPOINT,    -- descriptor_type,
+    0b10000001,         -- endpoint_address, (Endpoint 1, IN)
+    USB_EPT_INT,        -- attributes; (Interrupt)
+    USB_EP1_IN_SIZE,                
+    0x00,               -- max_packet_size
+    0x01                -- interval (1ms)
+}
+
+const byte USB_STRING0[] = 
+{
+    0x04,   -- bLength
+    USB_DT_STRING,  -- bDescriptorType
+    0x09,   -- wLANGID[0] (low byte)
+    0x04    -- wLANGID[0] (high byte)
+}
+
+const byte USB_STRING1[32] = 
+{
+    32,   -- bLength
+    USB_DT_STRING,  -- bDescriptorType
+    "S", 0x00, 
+    "u", 0x00, 
+    "r", 0x00, 
+    "r", 0x00, 
+    "e", 0x00, 
+    "a", 0x00, 
+    "l", 0x00, 
+    "i", 0x00, 
+    "t", 0x00, 
+    "y", 0x00,
+    " ", 0x00, 
+    "L", 0x00, 
+    "a", 0x00, 
+    "b", 0x00, 
+    "s", 0x00
+}
+
+const byte USB_STRING2[20] = 
+{
+    20, -- bLength
+    USB_DT_STRING,  -- bDescriptorType
+    "N", 0x00, 
+    "E", 0x00, 
+    "S", 0x00, 
+    "V", 0x00, 
+    "e", 0x00, 
+    "r", 0x00, 
+    "t", 0x00, 
+    "e", 0x00, 
+    "r", 0x00
+}
+
+-- include remaining USB libraries
+include usb_drv_core
+include usb_drv
+
+var byte hid_report_in[8] = { 0,0,0,0,0,0,0,0 }
+
+var byte xAxis = 0
+var byte xAxisNew = 128
+var byte yAxis = 0
+var byte yAxisNew = 128
+var byte buttons = 255
+var byte buttonsNew = 0
+
+var byte changedFlag = 0
+
+alias upButton is pin_c6
+alias downButton is pin_c3
+alias leftButton is pin_c4
+alias rightButton is pin_c5
+alias aButton is pin_b7
+alias bButton is pin_c1
+alias selectButton is pin_c2
+alias startButton is pin_b5
+
+-- all ports digital
+enable_digital_io()
+
+-- setup the USB device
+usb_setup()
+
+-- enable USB device
+usb_enable_module()
+
+-- configure inputs
+pin_c6_direction = input
+pin_c3_direction = input
+pin_c4_direction = input
+pin_c5_direction = input
+pin_b7_direction = input
+pin_c1_direction = input
+pin_c2_direction = input
+pin_b5_direction = input
+
+forever loop 
+	-- serve the USB requests
+    usb_handle_isr()
+	
+    if usb_is_configured()  then
+
+        yAxisNew = 128
+        if(upButton == low) then
+            yAxisNew = yAxisNew - 128
+        end if
+
+        if(downButton == low) then
+            yAxisNew = yAxisNew + 127
+        end if
+
+        xAxisNew = 128
+        if(leftButton == low) then
+            xAxisNew = xAxisNew - 128
+        end if
+
+        if(rightButton == low) then
+            xAxisNew = xAxisNew + 127
+        end if
+
+        buttonsNew = 0
+
+        if(aButton == low) then
+            buttonsNew = buttonsNew + 1
+        end if
+
+        if(bButton == low) then
+            buttonsNew = buttonsNew + 2
+        end if
+
+        if(selectButton == low) then
+            buttonsNew = buttonsNew + 4
+        end if
+
+        if(startButton == low) then
+            buttonsNew = buttonsNew + 8
+        end if
+
+        if(xAxis != xAxisNew) then
+            changedFlag = 1
+            xAxis = xAxisNew
+        end if
+
+        if(yAxis != yAxisNew) then
+            changedFlag = 1
+            yAxis = yAxisNew
+        end if
+
+        if(buttons != buttonsNew) then
+            changedFlag = 1
+            buttons = buttonsNew
+        end if
+
+		-- if the inputs changed, send an HID report	
+		if ( changedFlag == 1 ) then
+
+			changedFlag = 0
+
+            hid_report_in[0] = xAxis
+            hid_report_in[1] = yAxis
+            hid_report_in[2] = buttons
+	
+			-- send the report.
+			usb_send_data(USB_HID_ENDPOINT, hid_report_in, count( hid_report_in ) , low )
+
+			-- don't overload the host
+			delay_1ms(10)
+		end if
+    end if
+end loop
+
+
