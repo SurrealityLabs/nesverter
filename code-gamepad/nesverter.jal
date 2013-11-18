@@ -192,8 +192,20 @@ const byte USB_STRING2[20] =
     "r", 0x00
 }
 
--- include remaining USB libraries
 include usb_drv_core
+var volatile bit _usb_hid_can_tx = true
+
+procedure usb_ep_data_in_callback(byte in end_point, word in buffer_addr, byte in byte_count) is
+    pragma inline
+        
+    -- data has been sent, so do we need to send more?
+    if (end_point == USB_HID_ENDPOINT) then
+        -- it's the data end point
+        _usb_hid_can_tx = true
+    end if
+end procedure
+
+-- include remaining USB libraries
 include usb_drv
 
 var byte hid_report_in[8] = { 0,0,0,0,0,0,0,0 }
@@ -302,10 +314,14 @@ forever loop
             hid_report_in[2] = buttons
 	
 			-- send the report.
+            while ( _usb_hid_can_tx == false ) loop
+                usb_handle_isr()
+            end loop
+            _usb_hid_can_tx = false
 			usb_send_data(USB_HID_ENDPOINT, hid_report_in, count( hid_report_in ) , low )
 
 			-- don't overload the host
-			delay_1ms(10)
+			delay_1ms(5)
 		end if
     end if
 end loop
